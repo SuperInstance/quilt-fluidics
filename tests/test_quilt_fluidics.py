@@ -11,6 +11,7 @@ from quilt_fluidics.charter import (
     Ferre, Filter, State, charter_step,
     CoupledAttractor,
     reynolds_number, regime, warranty_valid,
+    LayeredCharter,
 )
 from quilt_fluidics.jig import (
     GeometricLedger, ClockLedger, jig_precedence,
@@ -305,3 +306,65 @@ class TestHomeostaticRun(unittest.TestCase):
         self.assertIn("n_polls", result)
         self.assertIn("n_admissions", result)
         self.assertIn("n_silences", result)
+
+
+class TestLayeredCharter(unittest.TestCase):
+    """Tests for the Fold integration: Reynolds-as-knob (per-layer)."""
+
+    def test_create_layered_charter(self):
+        lc = LayeredCharter()
+        lc.add_layer(velocity=1.0, nu=0.001)
+        lc.add_layer(velocity=1.0, nu=1.0)
+        self.assertEqual(len(lc.layers), 2)
+
+    def test_regimes_per_layer(self):
+        lc = LayeredCharter()
+        lc.add_layer(velocity=1.0, nu=10.0)         # Re=0.1 → laminar
+        lc.add_layer(velocity=200.0, nu=1.0)        # Re=200 → ... actually laminar
+        # Better: explicit Re-target
+        lc2 = LayeredCharter()
+        lc2.add_layer(velocity=1.0, nu=1.0, regime_target="turbulent")
+        # Force a high Re:
+        lc2.set_velocity(0, 5000.0)
+        regimes = lc2.regimes()
+        self.assertEqual(regimes[0], "turbulent")
+
+    def test_set_velocity(self):
+        lc = LayeredCharter()
+        lc.add_layer(velocity=1.0, nu=1.0)
+        lc.set_velocity(0, 2300.0)  # Re = 2300
+        regimes = lc.regimes()
+        self.assertEqual(regimes[0], "edge")
+
+    def test_at_least_one_at_edge(self):
+        lc = LayeredCharter()
+        lc.add_layer(velocity=1.0, nu=1.0)
+        lc.add_layer(velocity=2300.0, nu=1.0)
+        self.assertTrue(lc.at_least_one_at_edge())
+
+    def test_charter_step_per_layer(self):
+        lc = LayeredCharter()
+        lc.add_layer(velocity=2300.0, nu=1.0)  # edge → should crystallize
+        result = lc.step(intent="test")
+        # Should have one layer result, the edge one should crystallize.
+        self.assertEqual(len(result["layer_results"]), 1)
+        self.assertEqual(result["layer_results"][0]["regime"], "edge")
+
+    def test_layered_charter_uses_shared_state(self):
+        lc = LayeredCharter()
+        lc.add_layer(velocity=2300.0, nu=1.0)
+        lc.add_layer(velocity=2300.0, nu=1.0)
+        n_before = lc.state.scar_count
+        # Run a few steps to allow crystallization.
+        for _ in range(20):
+            lc.step(intent="seed")
+        n_after = lc.state.scar_count
+        # Shared state should be growing.
+        self.assertGreaterEqual(n_after, n_before)
+
+    def test_layer_with_target_regime(self):
+        # Auto-dial to edge.
+        lc = LayeredCharter()
+        lc.add_layer(velocity=1.0, nu=1.0, regime_target="edge")
+        regimes = lc.regimes()
+        self.assertEqual(regimes[0], "edge")

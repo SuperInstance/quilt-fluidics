@@ -11,6 +11,11 @@ ARTICLE II — Reynolds Rider:
   Edge    (Re ≈ 2300): coherent vortices. THE RAIN.
   Turbulent (Re > 4000): unbounded entropy. WARRANTY VOID.
 
+  ARTICLE II-bis — Reynolds-as-Knob (from the Fold):
+    In the Fold framework, Re is a per-layer tunable, not a constant.
+    Same constitution; different physics per layer.
+    Use `LayeredCharter` to dial per-layer Re.
+
 ARTICLE III — Dual-Attractor Coupling:
   Two substrates (A and B) in phase-lock.
   Each is a Lorenz attractor with σ, ρ, β parameters.
@@ -288,3 +293,83 @@ def charter_step(ferre: Ferre, filter_: Filter, state: State,
         "re": re,
         "regime": rgm,
     }
+
+
+# === ARTICLE II-bis: REYNOLDS-AS-KNOB ======================================
+# From the Fold framework: Reynolds is a per-layer dial, not a single
+# threshold. Set momentum/diffusion per layer to control regime.
+
+@dataclass
+class LayeredCharter:
+    """Multiple charters at different Reynolds regimes, sharing one State.
+
+    Per the Fold framework:
+      - Layer 0 might run laminar (raw sensors stable).
+      - Layer 1 might run critical (features learning).
+      - Layer 2 might run turbulent (exploration).
+
+    Same constitution. Different physics. Per layer.
+    """
+    layers: list[dict] = field(default_factory=list)
+    state: State = field(default_factory=State)
+
+    def add_layer(self, *, velocity: float, nu: float,
+                  name: str = "", regime_target: str | None = None) -> int:
+        """Add a Charter layer. If `regime_target` is set, auto-tunes."""
+        ferre = Ferre(velocity=velocity)
+        filter_ = Filter(nu=nu)
+        if regime_target is not None:
+            # Auto-dial velocity and nu to land in the target regime.
+            re = reynolds_number(ferre, filter_)
+            if regime_target == "laminar" and re >= 2000:
+                # Reduce velocity or increase nu.
+                target_re = 1000.0
+                ferre.velocity = target_re * filter_.nu
+            elif regime_target == "edge" and not (2000 <= re <= 4000):
+                target_re = 2300.0
+                ferre.velocity = target_re * filter_.nu
+            elif regime_target == "turbulent" and re <= 4000:
+                target_re = 5000.0
+                ferre.velocity = target_re * filter_.nu
+        self.layers.append({
+            "name": name or f"layer.{len(self.layers)}",
+            "ferre": ferre,
+            "filter": filter_,
+            "regime_target": regime_target,
+        })
+        return len(self.layers) - 1
+
+    def set_velocity(self, layer: int, velocity: float) -> None:
+        if 0 <= layer < len(self.layers):
+            self.layers[layer]["ferre"].velocity = velocity
+
+    def set_nu(self, layer: int, nu: float) -> None:
+        if 0 <= layer < len(self.layers):
+            self.layers[layer]["filter"].nu = nu
+
+    def regimes(self) -> list[str]:
+        return [regime(reynolds_number(L["ferre"], L["filter"]))
+                for L in self.layers]
+
+    def step(self, *, intent: str = "") -> dict:
+        """Run one charter_step per layer, sharing the State ledger."""
+        results = []
+        for i, L in enumerate(self.layers):
+            r = charter_step(L["ferre"], L["filter"], self.state, intent=intent)
+            results.append({"layer": i, "name": L["name"], **r})
+        return {
+            "ts": time.time(),
+            "layer_results": results,
+            "state_canary": self.state.canary()[:16],
+        }
+
+    def at_least_one_at_edge(self) -> bool:
+        return any(r == "edge" for r in self.regimes())
+
+    def summary(self) -> dict:
+        return {
+            "n_layers": len(self.layers),
+            "regimes": self.regimes(),
+            "state_scar_count": self.state.scar_count,
+            "at_least_one_at_edge": self.at_least_one_at_edge(),
+        }
