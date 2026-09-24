@@ -248,25 +248,43 @@ class CoupledAttractor:
 
 def charter_step(ferre: Ferre, filter_: Filter, state: State,
                  *, intent: str = "") -> dict:
-    """One tick of the Coupling Charter."""
+    """One tick of the Coupling Charter.
+
+    Per Article II:
+      - Laminar (Re < 2000): BREACH — refuse crystallizations.
+      - Edge (2000 ≤ Re ≤ 4000): VALID — crystallize.
+      - Turbulent (Re > 4000): WARRANTY VOID — refuse crystallizations.
+    """
+    re = reynolds_number(ferre, filter_)
+    rgm = regime(re)
     # 1. Ferre pushes a wavefront
     wavefront = ferre.impulse((state.scar_count, filter_.rejections,
                                 ferre.velocity))
     # 2. Filter attenuates it to ledger-dimension
     attenuated = filter_.attenuate(wavefront)
-    # 3. State crystallizes it (or rejects if no signal)
-    if any(abs(v) > 0.001 for v in attenuated):
+    ev = None
+    refusal_reason = None
+    if rgm == "laminar":
+        # Article II Section 2.01: Prohibition of Predictable Execution.
+        refusal_reason = "LAMINAR_BREACH (Article II §2.01)"
+        filter_.reject()
+    elif rgm == "turbulent":
+        # Article II Section 2.02: Indemnification Against Total Entropy.
+        refusal_reason = "TURBULENT_FORFEIT (Article II §2.02)"
+        filter_.reject()
+    elif any(abs(v) > 0.001 for v in attenuated):
+        # Article II Section 2.03: The Intermittency Covenant.
         ev = state.crystallize(*attenuated, source="ferre",
                                intent=intent or "charter_step")
     else:
         filter_.reject()
-        ev = None
     return {
         "ts": time.time(),
         "wavefront": wavefront,
         "attenuated": attenuated,
         "event": ev,
+        "refusal_reason": refusal_reason,
         "canary": state.canary()[:16],
-        "re": reynolds_number(ferre, filter_),
-        "regime": regime(reynolds_number(ferre, filter_)),
+        "re": re,
+        "regime": rgm,
     }

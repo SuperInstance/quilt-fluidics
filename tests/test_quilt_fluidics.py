@@ -2,6 +2,7 @@
 import math
 import os
 import sys
+import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import unittest
@@ -195,3 +196,112 @@ class TestCharterStep(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCharterHound(unittest.TestCase):
+    """The Charter should hold against adversarial hounds."""
+
+    def test_laminar_lock_blocks_innovation(self):
+        from quilt_fluidics.adversarial import CharterHound
+        hound = CharterHound(genome="laminar_lock")
+        result = hound.run(ticks=100)
+        self.assertEqual(result["regime"], "laminar")
+        self.assertEqual(result["innovation_breaches"], 0)
+        self.assertEqual(result["verdict"], "CHARTER_HELD")
+
+    def test_turbulent_forfeit_resisted(self):
+        from quilt_fluidics.adversarial import CharterHound
+        hound = CharterHound(genome="turbulent_forfeit")
+        result = hound.run(ticks=100)
+        self.assertEqual(result["regime"], "turbulent")
+        self.assertEqual(result["verdict"], "FORFEIT_RESISTED")
+
+    def test_bypass_filter_held(self):
+        from quilt_fluidics.adversarial import CharterHound
+        hound = CharterHound(genome="bypass_filter")
+        result = hound.run(ticks=50)
+        self.assertEqual(result["verdict"], "FILTER_HELD")
+
+    def test_geometric_lie_caught(self):
+        from quilt_fluidics.adversarial import CharterHound
+        hound = CharterHound(genome="geometric_lie")
+        result = hound.run()
+        self.assertTrue(result["true_jig"])
+        self.assertFalse(result["false_jig"])
+        self.assertEqual(result["verdict"], "GEOMETRY_HELD")
+
+    def test_honest_jam_rains(self):
+        from quilt_fluidics.adversarial import CharterHound
+        hound = CharterHound(genome="honest_jam")
+        result = hound.run(ticks=200)
+        self.assertEqual(result["verdict"], "RAIN")
+        self.assertGreater(result["edge_ticks"], 0)
+
+
+class TestThrottle(unittest.TestCase):
+    def test_throttle_starts_at_window_1(self):
+        from quilt_fluidics.adversarial import Throttle
+        t = Throttle()
+        self.assertEqual(t.window, 1)
+
+    def test_throttle_decides(self):
+        from quilt_fluidics.adversarial import Throttle
+        from quilt_fluidics.charter import State
+        t = Throttle()
+        s = State()
+        decision, detail = t.decide(s)
+        self.assertIn(decision, ["expand", "contract", "hold"])
+        self.assertIn("window", detail)
+
+
+class TestCampaign(unittest.TestCase):
+    def test_run_campaign(self):
+        from quilt_fluidics.adversarial import run_campaign, CharterHound
+        result = run_campaign(genomes=["honest_jam"], ticks=20)
+        self.assertIn("results", result)
+        self.assertGreater(len(result["results"]), 0)
+        self.assertIn("scar_count", result)
+
+    def test_run_campaign_all_hounds(self):
+        from quilt_fluidics.adversarial import run_campaign, CharterHound
+        result = run_campaign(genomes=CharterHound.HOUND_GENOMES, ticks=10)
+        self.assertIn("results", result)
+
+
+class TestSilenceDetector(unittest.TestCase):
+    """jeviter-style homeostatic silence detector."""
+
+    def test_admits_when_events_present(self):
+        from quilt_fluidics.homeostatic import SilenceDetector
+        from quilt_fluidics.charter import State
+        s = State()
+        s.crystallize(1, 2, 3, intent="test")
+        d = SilenceDetector()
+        r = d.poll(state_has_events=bool(s.events))
+        self.assertEqual(r["event"], "admission")
+
+    def test_emits_silence_receipt(self):
+        from quilt_fluidics.homeostatic import SilenceDetector
+        from quilt_fluidics.charter import State
+        s = State()
+        d = SilenceDetector(silence_threshold_ticks=0)
+        # First poll seeds
+        r1 = d.poll(state_has_events=False)
+        self.assertEqual(r1["event"], "seed")
+        # Sleep so threshold passes
+        time.sleep(0.01)
+        r2 = d.poll(state_has_events=False)
+        self.assertEqual(r2["event"], "silence_refusal")
+        self.assertIn("hash", r2)
+
+
+class TestHomeostaticRun(unittest.TestCase):
+    def test_run(self):
+        from quilt_fluidics.homeostatic import homeostatic_run
+        from quilt_fluidics.charter import State
+        s = State()
+        s.crystallize(1, 2, 3, intent="seed")
+        result = homeostatic_run(s, ticks=10, threshold=5)
+        self.assertIn("n_polls", result)
+        self.assertIn("n_admissions", result)
+        self.assertIn("n_silences", result)
